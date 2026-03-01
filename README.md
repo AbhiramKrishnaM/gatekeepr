@@ -68,3 +68,39 @@ C. The Interaction Flow
     FastAPI calls the LLM to get a Risk Score.
 
     FastAPI returns a "Go" or "No-Go" to the Worker.
+
+
+
+
+# Project Structure (AI Generated - Might need to review and change this)
+
+ai-agent-guard/
+├── app/
+│   ├── __init__.py
+│   ├── main.py                # The FastAPI entry point (The "Brain Center")
+│   ├── core/
+│   │   ├── config.py          # API keys (OpenAI, Postgres URL)
+│   │   └── security.py        # Logic for API keys/auth
+│   ├── api/
+│   │   ├── routes.py          # API endpoints (e.g., /intercept, /approve)
+│   │   └── dependencies.py    # Shared logic for routes
+│   ├── services/
+│   │   ├── guardian.py        # The "Guardian" logic (Risk scoring + DeepEval)
+│   │   ├── policy_engine.py   # Code that reads your JSON/DSL rules
+│   │   └── queue_manager.py   # Redis Streams / Kafka interaction logic
+│   ├── models/
+│   │   ├── domain.py          # Pydantic models (What an "Action" looks like)
+│   │   └── database.py        # SQLAlchemy/SQLModel definitions for Postgres
+│   └── data/
+│       ├── policies/
+│       │   └── default_rules.json # Your JSON DSL (The "Rulebook")
+│       └── prompts/
+│           └── risk_scorer.txt    # System prompt for the LLM Scorer
+├── scripts/
+│   └── mock_agent.py          # A script to simulate a "Worker Agent" for testing
+├── tests/
+│   └── test_compliance.py     # DeepEval test cases
+├── .env                       # Secret environment variables (DO NOT COMMIT)
+├── docker-compose.yml         # To spin up Postgres and Redis easily
+├── requirements.txt           # Python dependencies
+└── README.md                  # Project documentation and ADR
