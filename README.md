@@ -70,6 +70,33 @@ C. The Interaction Flow
     FastAPI returns a "Go" or "No-Go" to the Worker.
 
 
+# Existing Applications that focuses on AI Security and Guard (AI Generated)
+
+1. Enterprise "Guardian" Platforms
+
+These are high-end, expensive softwares used by big companies to watch their agents in real-time.
+
+    Zenity (AIDR):  It monitors "Agent Intent." If an agent tries to do something it shouldn't (like accessing a database it doesn't need), Zenity blocks it in real-time.
+
+    AppOmni AgentGuard: Acts like a firewall specifically for agents. It reviews every "instruction" an agent receives before the agent can act on it.
+
+    Silverfort: They focus on "Identity." They treat the AI agent like a digital employee. If the agent suddenly asks for "Admin" permissions, Silverfort blocks the request.
+
+    Wayfound: This is more of a "Supervisor" dashboard. It shows you a transcript of what the agent is doing and highlights where it broke your company's rules.
+
+2. Developer Tools & Frameworks
+
+These are closer to what you are building with your tech stack.
+
+    NVIDIA NeMo Guardrails: This is the "Gold Standard" for open-source policy rules. It uses a language called Colang (similar to your DSL idea) to define exactly what an agent can and cannot say or do.
+
+    Lakera Guard: A real-time API that sits in front of your LLM. It's famous for stopping "Prompt Injections" (when a user tries to trick your agent into breaking its rules).
+
+    Braintrust & LangSmith: These are "Observability" tools. They don't always block actions, but they record everything so you can see exactly why an agent made a "risky" decision.
+
+    DeepEval (Which you mentioned): In 2026, DeepEval is widely used for "Unit Testing" agents.
+
+
 
 
 # Project Structure (AI Generated - Might need to review and change this)
@@ -104,3 +131,6 @@ ai-agent-guard/
 ├── docker-compose.yml         # To spin up Postgres and Redis easily
 ├── requirements.txt           # Python dependencies
 └── README.md                  # Project documentation and ADR
+
+
+
