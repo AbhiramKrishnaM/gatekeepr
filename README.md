@@ -69,8 +69,7 @@ C. The Interaction Flow
 
     FastAPI returns a "Go" or "No-Go" to the Worker.
 
-
-# Existing Applications that focuses on AI Security and Guard (AI Generated)
+## Existing Applications that focuses on AI Security and Guard (AI Generated)
 
 1. Enterprise "Guardian" Platforms
 
@@ -96,10 +95,7 @@ These are closer to what you are building with your tech stack.
 
     DeepEval (Which you mentioned): In 2026, DeepEval is widely used for "Unit Testing" agents.
 
-
-
-
-# Project Structure (AI Generated - Might need to review and change this)
+## Project Structure (AI Generated - Might need to review and change this)
 
 ai-agent-guard/
 ├── app/
@@ -131,6 +127,3 @@ ai-agent-guard/
 ├── docker-compose.yml         # To spin up Postgres and Redis easily
 ├── requirements.txt           # Python dependencies
 └── README.md                  # Project documentation and ADR
-
-
-
