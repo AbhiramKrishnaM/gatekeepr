@@ -1,12 +1,9 @@
+from enum import Enum
 from fastapi import FastAPI
 
 app = FastAPI()
 
+# check if the server is running 
 @app.get("/")
 async def root():
-    return {"message":"hello world!"}
-
-
-@app.get("/items/{item_id}")
-async def read_item(item_id: int | float):
-    return {"item_id": item_id}
+    return {"message":"server is up and running!"}
