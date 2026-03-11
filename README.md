@@ -127,3 +127,43 @@ ai-agent-guard/
 ├── docker-compose.yml         # To spin up Postgres and Redis easily
 ├── requirements.txt           # Python dependencies
 └── README.md                  # Project documentation and ADR
+
+------
+# Questions
+
+1. should i keep typing the dev start command eg:- fastapi dev. is there some simplified way like we type server run ? 
+
+
+<!-- Data comes like this to our application  -->
+
+```
+# This is what a Worker Agent would send to your API
+{
+    "agent_id": "worker-agent-123",
+    "action_type": "delete",  # or "create", "update", "read"
+    "target_resource": "user_data",
+    "target_id": "user_2",
+    "action_details": {
+        "operation": "delete_user",
+        "user_id": "2",
+        "reason": "User requested account deletion"
+    },
+    "context": {
+        "timestamp": "2026-01-15T10:30:00Z",
+        "session_id": "session-abc123"
+    }
+}
+```
+
+<!-- This is the response we need to give after evaluating -->
+```
+# Response from Guardian API
+{
+    "status": "allowed",  # or "blocked", "rewrite"
+    "risk_score": 0.3,  # 0.0 to 1.0
+    "message": "Action approved",
+    "original_action": {...},  # The original request
+    "suggested_action": null,  # If status is "rewrite", this contains safer version
+    "blocked_reason": null  # If status is "blocked", explanation here
+}
+```
