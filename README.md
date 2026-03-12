@@ -129,10 +129,6 @@ ai-agent-guard/
 └── README.md                  # Project documentation and ADR
 
 ------
-# Questions
-
-1. should i keep typing the dev start command eg:- fastapi dev. is there some simplified way like we type server run ? 
-
 
 <!-- Data comes like this to our application  -->
 
