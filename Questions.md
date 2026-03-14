@@ -6,7 +6,7 @@ March 11
 
 Ans:
     Created a Makefile. Now you can use:
-    - `make run` or `make dev` instead of `fastapi dev` 
+    - `make run` or `make dev` instead of `fastapi dev`
 
 March 12
 
