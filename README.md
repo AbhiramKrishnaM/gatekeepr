@@ -130,36 +130,31 @@ ai-agent-guard/
 
 ------
 
-<!-- Data comes like this to our application  -->
+Data comes like this to our application:
 
-```
-# This is what a Worker Agent would send to your API
-{
-    "agent_id": "worker-agent-123",
-    "action_type": "delete",  # or "create", "update", "read"
-    "target_resource": "user_data",
-    "target_id": "user_2",
-    "action_details": {
-        "operation": "delete_user",
-        "user_id": "2",
-        "reason": "User requested account deletion"
-    },
-    "context": {
-        "timestamp": "2026-01-15T10:30:00Z",
-        "session_id": "session-abc123"
+    {
+        "agent_id": "worker-agent-123",
+        "action_type": "delete",
+        "target_resource": "user_data",
+        "target_id": "user_2",
+        "action_details": {
+            "operation": "delete_user",
+            "user_id": "2",
+            "reason": "User requested account deletion"
+        },
+        "context": {
+            "timestamp": "2026-01-15T10:30:00Z",
+            "session_id": "session-abc123"
+        }
     }
-}
-```
 
-<!-- This is the response we need to give after evaluating -->
-```
-# Response from Guardian API
-{
-    "status": "allowed",  # or "blocked", "rewrite"
-    "risk_score": 0.3,  # 0.0 to 1.0
-    "message": "Action approved",
-    "original_action": {...},  # The original request
-    "suggested_action": null,  # If status is "rewrite", this contains safer version
-    "blocked_reason": null  # If status is "blocked", explanation here
-}
-```
+This is the response we need to give after evaluating:
+
+    {
+        "status": "allowed",
+        "risk_score": 0.3,
+        "message": "Action approved",
+        "original_action": {},
+        "suggested_action": null,
+        "blocked_reason": null
+    }
