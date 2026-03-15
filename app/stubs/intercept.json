@@ -1,0 +1,24 @@
+
+
+{
+   "intercept_1": {
+        "action": "delete",
+        "agent_id": "customer-support-bot-v1",
+        "target_resource": "user_data",
+        "target_id": "user_2",
+        "action_details": {
+            "operation": "delete_user",
+            "user_id": "2",
+            "reason": "User requested account deletion via chat",
+            "backup_required": true
+        },
+        "context": {
+            "timestamp": "2026-01-15T10:30:00Z",
+            "session_id": "session-abc123",
+            "user_ip": "192.168.1.1",
+            "conversation_history": "User: Delete my account\nBot: I'll help you with that..."
+        }
+    }
+}
+
+
