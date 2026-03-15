@@ -1,6 +1,7 @@
 from pydantic import BaseModel
 from fastapi import FastAPI
 from enum import Enum
+from typing import Optional
 
 app = FastAPI()
 
@@ -15,8 +16,8 @@ class InterceptRequest(BaseModel):
     agent_id: str # unique identifier for the agent making the request
     target_resource: str #  what type of resource the agent wants to operate on
     target_id: str # the specific id of the resource being acted upon
-    action_details: dict # additional details about the action 
-    context: dict # metadata about when/where/how the action was initiated
+    action_details: Optional[dict ] = None# additional details about the action 
+    context: Optional[dict] = None # metadata about when/where/how the action was initiated
 class InterceptResponse(BaseModel):
     status: str
     risk_score: float
