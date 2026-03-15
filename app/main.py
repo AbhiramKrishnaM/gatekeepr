@@ -11,12 +11,12 @@ class ActionType(Enum):
     CREATE = "create"
  
 class InterceptRequest(BaseModel):
-    action: ActionType
-    agent_id: str
-    target_resource: str 
-    target_id: str
-    action_details: dict
-    context: dict
+    action: ActionType   # what opeation the agent wants to perform
+    agent_id: str # unique identifier for the agent making the request
+    target_resource: str #  what type of resource the agent wants to operate on
+    target_id: str # the specific id of the resource being acted upon
+    action_details: dict # additional details about the action 
+    context: dict # metadata about when/where/how the action was initiated
 class InterceptResponse(BaseModel):
     status: str
     risk_score: float
