@@ -1,760 +1,343 @@
-# Learning Path: Build & Learn Step by Step
+# Agent Guard — Build Log & Learning Guide
 
-## 🎯 Overview
-
-This guide breaks down the entire project into small, manageable steps. You'll learn FastAPI, AI/ML concepts, and Python as you build.
+> A personal guide to building this project, learning the stack, and turning it into a business.
 
 ---
 
-## 📅 Phase 1: FastAPI Basics (Week 1)
+## What We're Actually Building
 
-**Goal:** Understand FastAPI fundamentals
+An **interception proxy for AI agents**. When an AI agent decides to take an action (delete a record, send an email, charge a card), that action passes through Agent Guard *before* it hits the real system. Guard evaluates it and says Allow, Rewrite, or Block.
 
-### Step 1.1: Understand What You Already Have (Day 1)
+The two-step evaluation:
+1. **Policy Engine** — fast rule check from a JSON file. E.g., "never delete on weekends", "max spend $100". No LLM needed. Instant.
+2. **Risk Scorer** — if rules pass, an LLM reads the action's intent and returns a score 0.0–1.0.
+   - `< 0.4` → Allow
+   - `0.4–0.7` → Rewrite (suggest safer version)
+   - `> 0.7` → Block + alert human
 
-You already have:
+Why two steps? The rule check is deterministic and free. The LLM call costs money and takes time. So only run the LLM when hard rules don't already decide the outcome.
 
-- ✅ A working FastAPI server
-- ✅ A GET endpoint (`/`)
-- ✅ A POST endpoint (`/items`)
+---
 
-**What to Learn:**
+## Current State of the Code
 
-- **What is FastAPI?** A Python web framework for building APIs
-- **What is an endpoint?** A URL path that responds to requests
-- **What is GET vs POST?** GET = read data, POST = send data
+- `app/main.py` — FastAPI app with `/intercept` POST endpoint. Returns a hardcoded stub (`status: allowed, risk_score: 0.3`). The Pydantic models `InterceptRequest` and `InterceptResponse` are defined here.
+- `app/api/routes.py` — Empty (1 line). Hasn't been used yet.
+- `app/data/policies/default_rules.json` — Empty placeholder.
+- `app/data/prompts/risk_scorer.txt` — Empty placeholder.
 
-**Action:** Run your server and test it:
+Everything else is yet to be built.
 
-```bash
-make dev
-# Then visit http://localhost:8000/docs
+---
+
+## The Build Plan
+
+### Phase 1 — Policy Engine (Next Up)
+
+**What to build:** `app/services/policy_engine.py` + populate `default_rules.json`.
+
+**What to learn: How JSON config-driven logic works**
+
+The idea is that business rules live in a JSON file, not hardcoded in Python. This means a non-engineer (a compliance officer, a product manager) can change rules without touching code.
+
+```json
+{
+  "rules": [
+    {
+      "id": "no-delete-weekends",
+      "action_type": "delete",
+      "condition": "day_of_week in ['Saturday', 'Sunday']",
+      "verdict": "block",
+      "reason": "Deletions not permitted on weekends"
+    },
+    {
+      "id": "max-spend",
+      "action_type": "create",
+      "target_resource": "payment",
+      "condition": "amount > 100",
+      "verdict": "block",
+      "reason": "Spend limit exceeded"
+    }
+  ]
+}
 ```
 
-### Step 1.2: Create Your First Guardian Endpoint (Day 2-3)
+Your `policy_engine.py` reads this file at startup, loops over the rules, and checks each one against the incoming `InterceptRequest`. If any rule matches, return `blocked` immediately with the reason. If nothing matches, return `pass`.
 
-**Goal:** Create `/intercept` endpoint that receives JSON
+**Key Python you'll use:**
+- `json.load()` to read the file
+- `datetime.now().weekday()` to get day of week
+- A simple `for rule in rules:` loop with `if/elif` conditions
 
-**What You'll Learn:**
-
-- How to receive JSON data
-- What Pydantic models are (data validation)
-- How to return JSON responses
-
-**What to Build:**
-
-- A simple `/intercept` endpoint that receives an action
-- Returns a mock response like `{"status": "allowed", "risk_score": 0.3}`
-
-**Why This Step:**
-
-- You'll understand request/response
-- You'll see how FastAPI validates data
-- No AI/ML yet - just HTTP basics
+**The deeper concept — why not just use if/else in Python?** Because if-else is code. To change it, you redeploy. A JSON config file can be reloaded without restarting the server. At scale, you'd store these rules in a database so they can be updated via an admin UI. That's how tools like NeMo Guardrails and Lakera work — the rules are data, not code.
 
 ---
 
-## 📅 Phase 2: Understanding the Data Flow (Week 2)
+### Phase 2 — LLM Risk Scorer
 
-**Goal:** Understand how data moves through your system
+**What to build:** `app/services/risk_scorer.py` + populate `risk_scorer.txt`.
 
-### Step 2.1: Create Data Models (Day 4-5)
+**What to learn: How to prompt an LLM to return structured output**
 
-**Goal:** Define what an "action" looks like
+The hardest part here isn't calling the API — it's getting the LLM to reliably return a number between 0 and 1, not a paragraph of explanation.
 
-**What You'll Learn:**
+Your prompt template (`risk_scorer.txt`) will look something like:
 
-- **What is a data model?** A blueprint for data structure
-- **What is Pydantic?** A library that validates data automatically
-- **What is JSON?** A way to represent data
+```
+You are a security evaluator for AI agent actions.
+Given the following action, return ONLY a JSON object with a risk_score between 0.0 and 1.0.
+0.0 = completely safe. 1.0 = highly dangerous or irreversible.
 
-**What to Build:**
+Action: {action_type} on {target_resource} (id: {target_id})
+Details: {action_details}
+Context: {context}
 
-- `app/models/domain.py` with `ActionRequest` model
-- This defines: agent_id, action_type, target_resource, etc.
+Respond with ONLY this JSON, nothing else:
+{"risk_score": <number>, "reason": "<one sentence>"}
+```
 
-**Why This Step:**
+The trick is being extremely explicit. LLMs are verbose by default. You force structure by:
+1. Saying "ONLY this JSON" in the prompt
+2. Using a low-temperature setting (e.g., `temperature=0.1`) — lower temperature = more predictable, less creative output
+3. Parsing with a try/except in case it still returns garbage
 
-- You'll understand data structures
-- You'll see how Python classes work
-- Foundation for everything else
+**Parsing strategy:**
+```python
+import json, re
 
-### Step 2.2: Read JSON Files (Day 6-7)
+def parse_score(llm_response: str) -> float:
+    # Try clean JSON parse first
+    try:
+        data = json.loads(llm_response.strip())
+        return float(data["risk_score"])
+    except:
+        pass
+    # Fallback: regex to find a float
+    match = re.search(r'"risk_score"\s*:\s*([0-9.]+)', llm_response)
+    if match:
+        return float(match.group(1))
+    return 0.5  # safe default if parsing fails
+```
 
-**Goal:** Read policy rules from a JSON file
-
-**What You'll Learn:**
-
-- How to read files in Python
-- What JSON is and how to parse it
-- How to structure configuration files
-
-**What to Build:**
-
-- `app/data/policies/default_rules.json` with simple rules
-- `app/services/policy_engine.py` that reads this file
-- Function that checks: "Is DELETE allowed?"
-
-**Why This Step:**
-
-- You'll learn file I/O
-- You'll understand configuration
-- Still no AI - just file reading
-
----
-
-## 📅 Phase 3: Your First AI Integration (Week 3)
-
-**Goal:** Call an LLM for the first time
-
-### Step 3.1: Understand What an LLM Is (Day 8)
-
-**What is an LLM?**
-
-- **Large Language Model** = AI that understands text
-- Examples: ChatGPT, Claude, Llama
-- You give it text, it gives you text back
-
-**Key Terms:**
-
-- **Prompt** = The text you send to the LLM
-- **Response** = The text the LLM sends back
-- **Model** = The specific AI (like "llama3.2")
-
-### Step 3.2: Call Ollama (Day 9-10)
-
-**Goal:** Make your first LLM call
-
-**What You'll Learn:**
-
-- **What is an API?** A way for programs to talk to each other
-- **What is HTTP?** The protocol for web communication
-- How to make HTTP requests in Python
-
-**What to Build:**
-
-- `app/services/risk_scorer.py`
-- Function that sends a prompt to Ollama
-- Gets back a risk score (just a number for now)
-
-**Why This Step:**
-
-- You'll make your first AI call
-- You'll understand APIs
-- Simple: send text, get text back
-
-### Step 3.3: Parse LLM Response (Day 11)
-
-**Goal:** Extract risk score from LLM response
-
-**What You'll Learn:**
-
-- How to extract information from text
-- String manipulation in Python
-- Error handling (what if LLM returns weird text?)
-
-**What to Build:**
-
-- Parse the LLM response to get a number (0.0 to 1.0)
-- Handle cases where LLM doesn't return what you expect
+**Which LLM to use:** Start with Ollama locally (free, no API key, runs on your machine). Later swap to Claude or GPT-4 for production quality. The code stays the same — you just change the endpoint/model name.
 
 ---
 
-## 📅 Phase 4: Putting It Together (Week 4)
+### Phase 3 — Guardian Orchestrator
 
-**Goal:** Connect all pieces
+**What to build:** `app/services/guardian.py`
 
-### Step 4.1: Create the Guardian Service (Day 12-13)
+This is the simplest file conceptually. It imports the policy engine and risk scorer, runs them in sequence, and returns the final verdict.
 
-**Goal:** Orchestrate policy check + risk scoring
+```python
+async def evaluate(request: InterceptRequest) -> InterceptResponse:
+    # Step 1: Policy check (fast, free)
+    policy_result = policy_engine.check(request)
+    if policy_result.blocked:
+        return InterceptResponse(status="blocked", risk_score=1.0, blocked_reason=policy_result.reason)
 
-**What You'll Learn:**
+    # Step 2: LLM risk score (slow, costs money)
+    risk_score = await risk_scorer.score(request)
 
-- How to combine multiple functions
-- Control flow (if/else)
-- How services work together
+    if risk_score < 0.4:
+        return InterceptResponse(status="allowed", risk_score=risk_score)
+    elif risk_score < 0.7:
+        return InterceptResponse(status="rewrite", risk_score=risk_score, message="Consider a safer approach")
+    else:
+        return InterceptResponse(status="blocked", risk_score=risk_score, blocked_reason="High risk action detected")
+```
 
-**What to Build:**
+**What to learn: async/await**
 
-- `app/services/guardian.py`
-- Function that:
-  1. Checks policy rules
-  2. If passed, calls risk scorer
-  3. Makes decision based on score
+FastAPI is async. When your guardian calls the LLM, it makes an HTTP request that takes 1–5 seconds. `async/await` means Python doesn't freeze and wait — it can handle other requests in the meantime. Think of it like a waiter taking multiple tables' orders instead of standing at one table waiting for food.
 
-**Why This Step:**
-
-- You'll see how everything connects
-- You'll understand the full flow
-- Still manageable - just combining what you built
-
-### Step 4.2: Wire It All Together (Day 14)
-
-**Goal:** Connect endpoint → service → response
-
-**What You'll Learn:**
-
-- How to import modules
-- How to call functions
-- How FastAPI routes work
-
-**What to Build:**
-
-- Update `app/api/routes.py` to call guardian service
-- Return proper response
+- `async def` marks a function as async
+- `await` pauses that function until a slow operation completes, while the rest of the app keeps running
+- If you forget `await`, your LLM call will return a coroutine object (a promise), not the actual result
 
 ---
 
-## 🗺️ Learning Roadmap Summary
+### Phase 4 — Wire It to the Endpoint
 
-```text
-Week 1: FastAPI Basics
-├── Day 1: Understand what you have ✅
-├── Day 2-3: Create /intercept endpoint
-└── Learn: HTTP, JSON, FastAPI basics
+Move the models out of `main.py` into `app/models/domain.py`. Wire `/intercept` in `routes.py` to call `guardian.evaluate()`. Update `main.py` to import the router.
 
-Week 2: Data & Files
-├── Day 4-5: Create data models
-├── Day 6-7: Read JSON files
-└── Learn: Python classes, file I/O, JSON
+This is also when you add a real `InterceptResponse` with all fields:
 
-Week 3: First AI Integration
-├── Day 8: Learn what LLMs are
-├── Day 9-10: Call Ollama API
-├── Day 11: Parse LLM responses
-└── Learn: APIs, HTTP requests, LLMs
-
-Week 4: Connect Everything
-├── Day 12-13: Create Guardian service
-├── Day 14: Wire it all together
-└── Learn: Service architecture, imports
+```python
+class InterceptResponse(BaseModel):
+    status: str              # "allowed" | "blocked" | "rewrite"
+    risk_score: float
+    message: Optional[str] = None
+    blocked_reason: Optional[str] = None
+    suggested_action: Optional[dict] = None
+    original_action: dict
 ```
 
 ---
 
-## 📚 Key Concepts Explained Simply
+### Phase 5 — Database (Audit Log)
 
-### FastAPI Terms
+**What to build:** PostgreSQL via SQLModel or SQLAlchemy.
 
-- **Endpoint** = A URL path that does something (like `/intercept`)
-- **Route** = Same as endpoint
-- **Request** = Data coming IN to your API
-- **Response** = Data going OUT from your API
-- **Model (Pydantic)** = A blueprint for data structure
-- **Router** = A way to organize endpoints
+Every intercepted action should be logged — whether it was allowed or blocked, what the risk score was, which agent sent it. This is called an **audit trail**. It's not optional for a real product — it's how your customers prove compliance to their own auditors.
 
-### AI/ML Terms
+**What to learn: ORMs**
 
-- **LLM** = Large Language Model (AI that understands text)
-- **Prompt** = Text you send to the LLM
-- **Model** = Specific AI (like "llama3.2")
-- **API** = Way for programs to talk to each other
-- **Risk Score** = A number (0.0 to 1.0) representing how risky something is
+An ORM (Object Relational Mapper) lets you write Python objects instead of raw SQL. SQLModel is the best choice here because it works with Pydantic natively.
 
-### Python Terms
+```python
+from sqlmodel import SQLModel, Field
+from datetime import datetime
 
-- **Function** = A reusable piece of code
-- **Class** = A blueprint for creating objects
-- **Module** = A Python file you can import
-- **Package** = A folder with Python files
-
----
-
-## 🚀 Where to Start Right Now
-
-### Today: Step 1.1 - Understand What You Have
-
-1. **Run your server:**
-
-   ```bash
-   make dev
-   ```
-
-2. **Open Swagger UI:**
-
-   - Go to `http://localhost:8000/docs`
-   - This is FastAPI's automatic documentation
-
-3. **Test your endpoints:**
-
-   - Click on `GET /` → Try it out → Execute
-   - Click on `POST /items` → Try it out → Add JSON:
-
-     ```json
-     {
-       "name": "test",
-       "description": "test item",
-       "price": 100
-     }
-     ```
-
-   - Execute and see the response
-
-4. **What You Just Learned:**
-
-   - FastAPI auto-generates documentation
-   - You can test APIs in the browser
-   - JSON is how data is sent/received
-
----
-
-## 📝 Tomorrow: Step 1.2 - Create `/intercept` Endpoint
-
-**Goal:** Create an endpoint that receives an action and returns a mock decision.
-
-**What You'll Build:**
-
-- A POST endpoint at `/intercept`
-- It receives JSON with action details
-- Returns a simple response like `{"status": "allowed"}`
-
-**Why Start Here:**
-
-- You already know how to create POST endpoints
-- No AI/ML complexity yet
-- You'll see the basic flow
-
----
-
-## 🎓 Learning Strategy
-
-### 1. One Thing at a Time
-
-- Don't try to learn everything at once
-- Focus on one concept per day
-- Master it before moving on
-
-### 2. Build, Don't Just Read
-
-- Code along with each step
-- Make mistakes and fix them
-- Experiment and break things
-
-### 3. Use the Docs
-
-- FastAPI docs: <https://fastapi.tiangolo.com>
-- Python docs: <https://docs.python.org>
-- Ask questions when stuck
-
-### 4. Don't Worry About Perfection
-
-- Working code > perfect code
-- You can refactor later
-- Learning > optimization
-
----
-
-## 📖 Resources for Each Phase
-
-### Phase 1: FastAPI Basics
-
-- FastAPI Tutorial: <https://fastapi.tiangolo.com/tutorial/>
-- Focus on: First Steps, Path Parameters, Request Body
-
-### Phase 2: Data & Files
-
-- Python JSON: <https://docs.python.org/3/library/json.html>
-- Python File I/O: <https://docs.python.org/3/tutorial/inputoutput.html>
-
-### Phase 3: AI Integration
-
-- Ollama Python: <https://github.com/ollama/ollama-python>
-- HTTP Requests: <https://requests.readthedocs.io/>
-
-### Phase 4: Architecture
-
-- FastAPI Bigger Applications: <https://fastapi.tiangolo.com/tutorial/bigger-applications/>
-
----
-
-## ✅ Your Action Plan
-
-### This Week
-
-- **Day 1 (today):** Understand your current code, test it
-- **Day 2-3:** Create `/intercept` endpoint with mock response
-- **Day 4-5:** Create `ActionRequest` model
-- **Day 6-7:** Read JSON policy file
-
-### Next Week
-
-- **Day 8:** Research what LLMs are (watch videos, read articles)
-- **Day 9-10:** Make your first Ollama call
-- **Day 11:** Parse the response
-
-### Week After
-
-- **Day 12-13:** Create Guardian service
-- **Day 14:** Connect everything
-
----
-
-## ❓ Questions to Ask Yourself Each Day
-
-1. What did I learn today?
-2. What confused me?
-3. What do I want to learn tomorrow?
-4. Did I write code or just read?
-
----
-
-## 💡 Remember
-
-- ✅ **It's okay to be overwhelmed** - break it into small steps
-- ✅ **You don't need to know everything** - learn as you go
-- ✅ **Mistakes are normal** - they help you learn
-- ✅ **Progress over perfection** - working code is the goal
-- ✅ **Ask for help** - use documentation, search, ask questions
-
----
-
-## 🎯 Start Here (Right Now)
-
-1. Open your terminal
-2. Run `make dev`
-3. Open `http://localhost:8000/docs`
-4. Play with your existing endpoints
-5. Understand what they do
-
-Once you're comfortable with that, move to **Step 1.2**: creating the `/intercept` endpoint.
-
----
-
-## 🏗️ FastAPI Architecture Overview
-
-### The Entry Point: `app/main.py`
-
-**Purpose:** Creates the FastAPI app instance and wires everything together.
-
-**What it does:**
-
-- Creates `app = FastAPI()` instance
-- Imports and includes routers from `app/api/routes.py`
-- Sets up middleware (CORS, logging, etc.)
-- Can include startup/shutdown events
-
-**Flow:**
-
-```text
-main.py → Creates FastAPI app → Includes routers → Server starts
+class ActionLog(SQLModel, table=True):
+    id: int = Field(default=None, primary_key=True)
+    agent_id: str
+    action_type: str
+    target_resource: str
+    target_id: str
+    status: str          # allowed / blocked / rewrite
+    risk_score: float
+    blocked_reason: Optional[str] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
 ```
 
+Use `docker-compose.yml` to spin up Postgres locally. You don't install Postgres on your machine — Docker runs it in a container.
+
 ---
 
-### The API Layer: `app/api/routes.py`
+### Phase 6 — Redis Streams (Optional, Advanced)
 
-**Purpose:** Defines all your HTTP endpoints (the "what" users can call).
+This is for when you want the Guardian to evaluate asynchronously — the Worker Agent fires off the action and gets an immediate acknowledgment (`"received, evaluating"`), then the result comes back via a callback or polling.
 
-**What goes here:**
+Skip this until the synchronous version works well. The sync version (request → evaluate → response in one HTTP call) is fine for v1.
 
-- `@app.post("/intercept")` - The main Guardian endpoint
-- `@app.get("/health")` - Health check
-- `@app.get("/actions/{action_id}")` - Get action history
-- Other endpoints
+---
 
-**What it does:**
+### Phase 7 — Testing with DeepEval
 
-- Receives HTTP requests
-- Validates input using Pydantic models (from `app/models/domain.py`)
-- Calls service functions (from `app/services/`)
-- Returns responses
+**What is DeepEval?** A testing framework specifically for LLM outputs. Normal unit tests check exact values. LLM outputs are fuzzy — you can't assert `score == 0.73`. DeepEval lets you assert things like "this response contains a risk score" or "the guardian correctly blocked this obviously dangerous action."
 
-**Flow:**
+Write tests like:
+- DELETE on a user resource should always have risk_score > 0.5
+- READ actions should generally be allowed
+- Actions with "reason: test" shouldn't be auto-blocked
 
-```text
-HTTP Request → routes.py → Validates input → Calls service → Returns response
+This is how you "guard the guardian" — make sure your own safety system isn't broken.
+
+---
+
+## Architecture Reference
+
+```
+HTTP Request (from Worker Agent)
+    ↓
+main.py → routes.py
+    ↓
+guardian.py (orchestrator)
+    ├── policy_engine.py (checks default_rules.json)
+    └── risk_scorer.py (calls Ollama/LLM with risk_scorer.txt prompt)
+    ↓
+ActionLog saved to PostgreSQL
+    ↓
+HTTP Response (status + risk_score)
 ```
 
----
+**File responsibilities (short version):**
 
-### The Models Layer: `app/models/domain.py`
-
-**Purpose:** Defines data structures (request/response shapes).
-
-**What goes here:**
-
-- `ActionRequest` - What Worker Agent sends
-- `GuardianResponse` - What Guardian returns
-- `ActionType` enum - CREATE, READ, UPDATE, DELETE
-- Other data models
-
-**Why separate:**
-
-- Reusable across routes and services
-- Type safety and validation
-- Clear contracts
-
-**Flow:**
-
-```text
-routes.py imports models → Validates incoming data → Passes to services
-```
+| File | Job |
+|------|-----|
+| `main.py` | Creates FastAPI app, mounts router |
+| `routes.py` | Defines HTTP endpoints |
+| `models/domain.py` | Pydantic data shapes |
+| `services/guardian.py` | Orchestrates evaluation |
+| `services/policy_engine.py` | JSON rule checking |
+| `services/risk_scorer.py` | LLM call + score parsing |
+| `core/config.py` | Env vars, API keys |
+| `models/database.py` | SQLModel table definitions |
 
 ---
 
-### The Services Layer: `app/services/`
+## Business Model
 
-**Purpose:** Business logic (the "how" things work).
+### The Problem You're Solving
 
-#### `app/services/guardian.py`
+Companies are deploying AI agents that can take real-world actions — sending emails, writing to databases, making API calls, spending money. Most of them have no safety layer between the agent's decision and the real world. One hallucination, one prompt injection, one misconfigured agent — and real damage happens. This is a real, unsolved, growing problem.
 
-- Orchestrates the Guardian flow
-- Calls policy engine → Calls risk scorer → Makes decision
-- Returns ALLOW/BLOCK/REWRITE
+### Who Would Pay for This
 
-**Flow:**
+**Primary:** Startups and mid-size companies building agent-based products (customer support bots, code agents, data pipeline agents). They don't want to build a safety layer themselves — they want to plug one in.
 
-```text
-guardian.py receives action → Calls policy_engine → Calls risk_scorer → Returns decision
-```
+**Secondary:** Enterprises (banks, healthcare, legal) that need AI governance for compliance. They're already spending on Zenity and AppOmni at $50k+/year.
 
-#### `app/services/policy_engine.py`
+### Monetization Options
 
-- Reads JSON rules from `app/data/policies/default_rules.json`
-- Checks if action violates rules
-- Returns pass/fail
+**1. API-as-a-Service (most realistic starting point)**
+- Charge per intercept call, like Stripe charges per transaction
+- Pricing: ~$0.001–$0.005 per intercept call
+- 1 million calls/month = $1,000–$5,000 MRR per customer
+- Companies running agents at scale easily hit 1M calls/month
 
-**Flow:**
+**2. SaaS Subscription with tiers**
+- Free: 10k calls/month (enough for dev/testing)
+- Starter: $99/month — 500k calls, basic rules
+- Pro: $499/month — 5M calls, custom policies, audit dashboard
+- Enterprise: Custom — SLA, SSO, on-prem deploy
 
-```text
-policy_engine.py → Reads JSON file → Checks rules → Returns True/False
-```
+**3. Open Source + Paid Cloud**
+- Release the core engine as open source (builds trust, community)
+- Charge for the hosted version, the dashboard, and enterprise features
+- This is the NeMo Guardrails / LangSmith model
 
-#### `app/services/risk_scorer.py`
+### What Makes It Defensible
 
-- Uses LLM (Ollama/OpenAI) to score risk
-- Reads prompt from `app/data/prompts/risk_scorer.txt`
-- Returns risk score (0.0 to 1.0)
+- **Policy DSL** — your JSON rule format becomes a standard. If people write rules for Agent Guard, switching costs go up.
+- **Audit logs** — compliance-heavy customers (fintech, healthcare) need provable logs. Whoever owns the audit trail owns the relationship.
+- **Integrations** — SDK wrappers for LangChain, CrewAI, Claude's tool use. Whoever integrates first into these ecosystems wins distribution.
 
-**Flow:**
+### MVP to Validate With
 
-```text
-risk_scorer.py → Reads prompt template → Calls LLM → Parses score → Returns float
-```
+Before building the dashboard or billing, validate with one real customer:
+1. Find a startup using LangChain agents or similar
+2. Give them free API access
+3. Ask: "Would you pay $99/month to know every action your agent takes before it happens?"
 
----
+If yes → build the billing. If no → understand why and iterate.
 
-### The Configuration Layer: `app/core/config.py`
+### Comparable Products (and Their Pricing Signal)
 
-**Purpose:** Centralized settings and environment variables.
+- **Lakera Guard** — prompt injection detection API. Enterprise pricing ($$$). Raised $20M.
+- **NeMo Guardrails** — open source, NVIDIA backs it. No direct monetization (yet).
+- **Zenity** — enterprise only, $50k+ contracts.
+- **Braintrust / LangSmith** — observability, not safety. Freemium → $500+/month.
 
-**What goes here:**
-
-- Database connection strings
-- API keys (Ollama, OpenAI)
-- Feature flags
-- App settings
-
-**Flow:**
-
-```text
-config.py → Reads .env file → Exports settings → Used by services
-```
+The gap: there's no affordable, developer-friendly, action-level safety API. That's the space.
 
 ---
 
-### The Data Layer: `app/data/`
+## Progress Checklist
 
-**Purpose:** Static files (rules, prompts).
-
-- `app/data/policies/default_rules.json` - Policy rules
-- `app/data/prompts/risk_scorer.txt` - LLM prompt template
-
-**Flow:**
-
-```text
-Services → Read files from data/ → Use in logic
-```
-
----
-
-## 🔄 Complete Request Flow
-
-```text
-1. HTTP Request arrives
-   ↓
-2. main.py (FastAPI app receives it)
-   ↓
-3. routes.py (Endpoint handler catches it)
-   ↓
-4. domain.py (Validates request structure)
-   ↓
-5. guardian.py (Main logic orchestrator)
-   ↓
-6. policy_engine.py (Checks JSON rules)
-   ↓
-7. risk_scorer.py (Calls LLM for risk score)
-   ↓
-8. guardian.py (Makes final decision)
-   ↓
-9. routes.py (Formats response)
-   ↓
-10. HTTP Response sent back
-```
+- [x] FastAPI server running
+- [x] `/intercept` endpoint stub
+- [x] Pydantic models (`InterceptRequest`, `InterceptResponse`)
+- [ ] `default_rules.json` with at least 3 rules
+- [ ] `policy_engine.py` — reads and evaluates rules
+- [ ] `risk_scorer.txt` — prompt template
+- [ ] `risk_scorer.py` — calls Ollama, parses score
+- [ ] `guardian.py` — orchestrates policy + scorer
+- [ ] Wire `/intercept` to call guardian (not a stub)
+- [ ] `models/domain.py` — move models out of main.py
+- [ ] `models/database.py` — SQLModel table for ActionLog
+- [ ] Postgres via docker-compose
+- [ ] Audit log: save every intercept call to DB
+- [ ] DeepEval tests for at least 5 scenarios
+- [ ] `mock_agent.py` — script that simulates a worker agent hitting your API
 
 ---
 
-## 📁 File Dependencies (What Imports What)
+## Resources (Only the Useful Ones)
 
-```text
-main.py
-  └─→ imports routes.py
-      └─→ imports models/domain.py
-      └─→ imports services/guardian.py
-          └─→ imports services/policy_engine.py
-          └─→ imports services/risk_scorer.py
-          └─→ imports models/domain.py
-              └─→ imports core/config.py
-                  └─→ reads .env file
-```
-
----
-
-## 📂 Folder Structure Breakdown
-
-```text
-app/
-├── main.py              # Entry point - Creates app, includes routers
-│
-├── api/                 # API Layer (HTTP endpoints)
-│   ├── routes.py        # All @app.get/@app.post endpoints
-│   └── dependencies.py  # Shared functions (auth, DB connections)
-│
-├── services/            # Business Logic Layer
-│   ├── guardian.py      # Main orchestrator
-│   ├── policy_engine.py # Rule checking
-│   └── risk_scorer.py   # LLM risk scoring
-│
-├── models/              # Data Models Layer
-│   └── domain.py       # Pydantic models (ActionRequest, etc.)
-│
-├── core/                # Configuration Layer
-│   └── config.py       # Settings, API keys, env vars
-│
-└── data/                # Static Data Layer
-    ├── policies/       # JSON rule files
-    └── prompts/        # LLM prompt templates
-```
-
----
-
-## 🔧 How to Wire It Together
-
-### Step 1: `main.py` Sets Up the App
-
-- Creates FastAPI instance
-- Includes router from `routes.py`
-- Can add middleware, CORS, etc.
-
-### Step 2: `routes.py` Defines Endpoints
-
-- Imports FastAPI router
-- Imports models from `domain.py`
-- Imports service functions from `services/guardian.py`
-- Defines endpoints that call services
-
-### Step 3: `services/guardian.py` Orchestrates
-
-- Imports `policy_engine.py`
-- Imports `risk_scorer.py`
-- Imports models from `domain.py`
-- Imports config from `core/config.py`
-- Combines policy check + risk score → decision
-
-### Step 4: `policy_engine.py` Checks Rules
-
-- Reads JSON from `data/policies/`
-- Validates against rules
-- Returns True/False
-
-### Step 5: `risk_scorer.py` Scores Risk
-
-- Reads prompt from `data/prompts/`
-- Uses config for LLM API key
-- Calls LLM
-- Returns score
-
----
-
-## 🎯 Example: How `/intercept` Endpoint Flows
-
-```text
-1. Client sends POST /intercept with JSON
-   ↓
-2. main.py → FastAPI receives request
-   ↓
-3. routes.py → @router.post("/intercept") catches it
-   ↓
-4. domain.py → ActionRequest model validates JSON structure
-   ↓
-5. routes.py → Calls guardian.validate_action(action)
-   ↓
-6. guardian.py → Calls policy_engine.check_rules(action)
-   ↓
-7. policy_engine.py → Reads default_rules.json → Returns pass/fail
-   ↓
-8. guardian.py → If passed, calls risk_scorer.score(action)
-   ↓
-9. risk_scorer.py → Reads risk_scorer.txt → Calls Ollama → Returns 0.7
-   ↓
-10. guardian.py → Score 0.7 = "rewrite" → Returns decision
-   ↓
-11. routes.py → Formats GuardianResponse → Returns HTTP 200
-   ↓
-12. Client receives response
-```
-
----
-
-## 📋 What Each File Is Responsible For
-
-| File               | Responsibility              | Doesn't Do                 |
-|--------------------|-----------------------------|----------------------------|
-| `main.py`          | App setup, router inclusion | Business logic             |
-| `routes.py`        | HTTP handling, validation   | Decision making            |
-| `guardian.py`      | Orchestrates flow           | HTTP handling, rule check  |
-| `policy_engine.py` | Rule validation             | LLM calls, HTTP            |
-| `risk_scorer.py`   | LLM risk scoring            | Rule checking, HTTP        |
-| `domain.py`        | Data structures             | Logic                      |
-| `config.py`        | Settings                    | Business logic             |
-
----
-
-## ✨ Benefits of This Structure
-
-1. **Separation of Concerns** - Each file has one job
-2. **Testability** - Test services without HTTP
-3. **Reusability** - Services can be used elsewhere
-4. **Maintainability** - Easy to find and change code
-5. **Scalability** - Easy to add new endpoints/services
-
----
-
-## 🎓 Next Steps After Understanding Architecture
-
-1. Create the folder structure
-2. Set up `config.py` to read environment variables
-3. Create `domain.py` with Pydantic models
-4. Create `policy_engine.py` to read JSON rules
-5. Create `risk_scorer.py` to call LLM
-6. Create `guardian.py` to orchestrate
-7. Create `routes.py` with the `/intercept` endpoint
-8. Wire everything in `main.py`
-
----
-
-## 🚦 Progress Checklist
-
-- [ ] Day 1: Understand current code, test endpoints
-- [ ] Day 2-3: Create `/intercept` endpoint
-- [ ] Day 4-5: Create data models (`domain.py`)
-- [ ] Day 6-7: Read JSON files (`policy_engine.py`)
-- [ ] Day 8: Learn about LLMs
-- [ ] Day 9-10: Call Ollama (`risk_scorer.py`)
-- [ ] Day 11: Parse LLM responses
-- [ ] Day 12-13: Create Guardian service
-- [ ] Day 14: Wire everything together
-
----
-
-**Remember:** Take it one step at a time. You've got this! 🚀
+- FastAPI docs: https://fastapi.tiangolo.com/tutorial/ — read "Request Body", "Dependencies", "Bigger Applications"
+- SQLModel: https://sqlmodel.tiangolo.com — same author as FastAPI, works natively with Pydantic
+- Ollama: https://github.com/ollama/ollama — run LLMs locally, free
+- DeepEval: https://docs.confident-ai.com — LLM testing framework
+- httpx: https://www.python-httpx.org — async HTTP client for calling Ollama (use this instead of `requests` in async FastAPI)
