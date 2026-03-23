@@ -28,7 +28,7 @@ The `/intercept` POST endpoint exists in `app/main.py` but returns a hardcoded s
 
 `app/api/routes.py` exists but is currently empty — intended for future endpoint organization.
 
-### Planned Phases (from HandHolding.md)
+### Planned Phases
 
 1. Policy Engine (`app/services/policy_engine.py`) — evaluate JSON rules
 2. LLM Risk Scorer (`app/services/risk_scorer.py`) — call LLM, parse score
@@ -49,5 +49,6 @@ See `app/stubs/intercept.json` for a concrete example request payload.
 ## Key Documentation
 
 - **README.md** — Architectural Decision Records and rationale for design choices
-- **HandHolding.md** — Phase-by-phase build guide with code examples and learning objectives
+- **WHAT_I_AM_BUILDING.md** — Deep dive into what Agent Guard is, how it works in the real world, and why it's designed this way (no code)
+- **ROADMAP.md** — Week-by-week learning and build plan
 - **Questions.md** — Q&A log covering flow and architecture decisions
