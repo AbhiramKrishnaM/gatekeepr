@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo '{\"hookSpecificOutput\": {\"hookEventName\": \"Stop\", \"additionalContext\": \"REMINDER: If you made any architectural decisions, implemented code, or changed how the system works in this response, update CLAUDE.md to reflect those changes before finishing.\"}}'",
+            "statusMessage": "Checking CLAUDE.md reminder..."
+          }
+        ]
+      }
+    ]
+  }
+}
